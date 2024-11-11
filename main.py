@@ -71,12 +71,12 @@ class Strategy:
     def place_atm_call_order(self, sl):
         current_price = self.broker.current_price("SPX", "CBOE")
 
-        self.closest_current_price = min(self.strikes, key=lambda x: abs(x - current_price))
+        closest_current_price = min(self.strikes, key=lambda x: abs(x - current_price))
 
         spx_contract = Option(
             symbol=creds.instrument,
             lastTradeDateOrContractMonth=self.date,
-            strike=self.closest_current_price,
+            strike=closest_current_price,
             right='C',
             exchange=creds.exchange
         )
@@ -86,16 +86,17 @@ class Strategy:
 
         def monitor_stop_loss():
             while True:
-                latest_price = self.broker.current_price("SPX", "CBOE")
-                print(f"Monitoring... Current Price: {latest_price}, Stop-Loss Price: {stop_loss_price}")
+                latest_premium = self.broker.get_option_premium_price(contract=spx_contract)
 
-                if latest_price >= stop_loss_price:
+                print(f"Monitoring... Current Price: {latest_premium}, Stop-Loss Price: {stop_loss_price}")
+
+                if latest_premium >= stop_loss_price:
                     print("STOP-LOSS TRIGGERED: BUYING CALL POSITION")
                     sell_order = MarketOrder('BUY', 1)
                     sell_trade = self.broker.place_market_order(spx_contract, sell_order)
 
                     while sell_trade.orderStatus.status != 'Filled':
-                        print(f"Waiting for Buy Order to Fill: Status - {sell_trade.orderStatus.status}")
+                        print(f"Waiting for BUY Order to Fill: Status - {sell_trade.orderStatus.status}")
                         time.sleep(3)
 
                     print("Buy Order Filled, Position Closed")
@@ -110,12 +111,12 @@ class Strategy:
     def place_atm_put_order(self, sl):
         current_price = self.broker.current_price("SPX", "CBOE")
 
-        self.closest_current_price = min(self.strikes, key=lambda x: abs(x - current_price))
+        closest_current_price = min(self.strikes, key=lambda x: abs(x - current_price))
 
         spx_contract = Option(
             symbol=creds.instrument,
             lastTradeDateOrContractMonth=self.date,
-            strike=self.closest_call,
+            strike=closest_current_price,
             right='P',
             exchange=creds.exchange
         )
@@ -139,7 +140,7 @@ class Strategy:
                         time.sleep(3)
 
                     print("Buy Order Filled, Position Closed")
-                    self.close_open_hedges(close_put=False, close_call=True)
+                    self.close_open_hedges(close_put=True, close_call=False)
                     break
                 else:
                     time.sleep(10)

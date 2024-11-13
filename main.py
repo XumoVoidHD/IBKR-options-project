@@ -20,12 +20,7 @@ class Strategy:
         print("Started Bot")
         self.strikes = self.broker.fetch_strikes(creds.instrument, creds.exchange)
         current_price = self.broker.current_price("SPX", "CBOE")
-        await asyncio.gather(
-            self.place_hedge_orders(),
-            self.close_open_hedges(),
-            self.place_atm_call_order(0.15),
-            self.place_atm_put_order(0.15),
-        )
+        k = asyncio.create_task(self.place_hedge_orders())
 
     async def place_hedge_orders(self):
         current_price = self.broker.current_price("SPX", "CBOE")

@@ -11,7 +11,7 @@ timeZ_Ny = pytz.timezone('America/New_York')
 class IBWrapper:
     def __init__(self, port):
         self.ib = IB()
-        asyncio.create_task(self.connect(port))
+        asyncio.run(self.connect(port))
 
     async def connect(self, port):
         self.ib = await self.login(port)

@@ -36,11 +36,18 @@ class Strategy:
 
         # await self.place_hedge_orders()
         await self.place_atm_call_order(0.15)
-        # asyncio.run(self.atm_call_trail_sl())
+        # await asyncio.sleep(10)
+        # k = await self.broker.get_open_orders()
+        # print(k)
+        # k = await self.broker.get_open_orders()
+        #
+        # x = await self.broker.modify_option_trail_percent(k[0], 0.14)
+        # print(x)
+        asyncio.run(self.atm_call_trail_sl())
 
     async def atm_call_trail_sl(self): #isn't able to modify existing trail order tries to place new trail order
         while True:
-            k = await self.broker.get_latest_premium_price("SPX", credentials.date, 5970, "C")
+            k = await self.broker.get_latest_premium_price("SPX", credentials.date, self.closest_current_price, "C")
             check = k['mid']
             print("check1")
             if check <= 0.95 * self.closest_current_price:
@@ -106,6 +113,7 @@ class Strategy:
     async def place_atm_call_order(self, sl):
         current_price = await self.broker.current_price("SPX", "CBOE")
         self.closest_current_price = min(self.strikes, key=lambda x: abs(x - current_price))
+        premium_price = await self.broker.get_latest_premium_price("SPX", credentials.date, self.closest_current_price, "C")
 
         spx_contract = Option(
             symbol="SPX",
@@ -120,7 +128,7 @@ class Strategy:
         if not qualified_contracts:
             raise ValueError("Failed to qualify contract with IBKR.")
 
-        k = await self.broker.place_bracket_order(symbol="SPX", quantity=1, price=4.8, stoploss=6, expiry=credentials.date,
+        k = await self.broker.place_bracket_order(symbol="SPX", quantity=1, price=premium_price, expiry=credentials.date,
                                                   strike=self.closest_current_price, right="C", trailingpercent=sl)
         self.atm_call_parendID = k['parent_id']
         self.atm_call_fill = k['avgFill']

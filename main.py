@@ -1,110 +1,130 @@
-import creds
-from ib_wrapper import IBWrapper
-from ib_insync import *
-import time
+from new_broker import IBTWSAPI
+import credentials
 import asyncio
+from ib_insync import *
+import nest_asyncio
+import time
+import threading
+
+nest_asyncio.apply()
+
+creds = {
+    "host": '127.0.0.1',  # Local host
+    "port": 7497,  # Paper trading port
+    "client_id": 12
+}
 
 
 class Strategy:
 
     def __init__(self):
-        self.broker = IBWrapper(creds.port)
-        self.strikes = None
+        self.atm_call_parendID = None
+        self.closest_current_price = 5860
         self.otm_closest_call = None
         self.otm_closest_put = None
-        self.date = creds.date
-        self.active_positions = {}  # Track active positions and their details
-        self.stop_loss_threads = {}  # Track stop loss monitoring threads
+        self.broker = IBTWSAPI(creds=creds)
+        self.strikes = None
+        self.atm_sl = 0.15
+        self.percent = 0.15
+        self.atm_call_fill = None
 
     async def main(self):
-        print("Started Bot")
-        self.strikes = self.broker.fetch_strikes(creds.instrument, creds.exchange)
-        current_price = self.broker.current_price("SPX", "CBOE")
-        k = asyncio.create_task(self.place_hedge_orders())
+        print("\n1. Testing connection...")
+        connected = await self.broker.connect()
+        print(f"Connection status: {connected}")
+        self.strikes = await self.broker.fetch_strikes("SPX", "SMART")
+
+        # await self.place_hedge_orders()
+        await self.place_atm_call_order(0.15)
+        # asyncio.run(self.atm_call_trail_sl())
+
+    async def atm_call_trail_sl(self): #isn't able to modify existing trail order tries to place new trail order
+        while True:
+            k = await self.broker.get_latest_premium_price("SPX", credentials.date, 5970, "C")
+            check = k['mid']
+            print("check1")
+            if check <= 0.95 * self.closest_current_price:
+                print("check2")
+                if self.percent > 0.01:
+                    print("check3")
+                    self.percent -= 0.01
+                    print(self.atm_call_parendID)
+                    # await self.broker.cancel_order(self.atm_call_parendID)
+                    c = Option(symbol="SPX", lastTradeDateOrContractMonth=credentials.date,
+                               strike=self.closest_current_price, right='C', exchange='SMART', currency="USD")
+                    order = Order(action='BUY', totalQuantity=1, orderType='TRAIL', parentId=self.atm_call_parendID,
+                                  trailingPercent=self.percent)
+                    await self.broker.simple_order(c, order)
+
+                else:
+                    break
+
 
     async def place_hedge_orders(self):
-        current_price = self.broker.current_price("SPX", "CBOE")
-        otm_call_strike = round(current_price + 10, 1)
-        otm_put_strike = round(current_price - 10, 1)
-
-        self.otm_closest_call = min(self.strikes, key=lambda x: abs(x - otm_call_strike))
-        self.otm_closest_put = min(self.strikes, key=lambda x: abs(x - otm_put_strike))
-
+        current_price = await self.broker.current_price("SPX")
+        closest_strike = min(self.strikes, key=lambda x: abs(x - current_price))
+        self.otm_closest_call = closest_strike + 10
+        self.otm_closest_put = closest_strike - 10
         spx_contract_call = Option(
-            symbol=creds.instrument,
-            lastTradeDateOrContractMonth=self.date,
+            symbol="SPX",
+            lastTradeDateOrContractMonth=credentials.date,
             strike=self.otm_closest_call,
             right='C',
-            exchange=creds.exchange
+            exchange="SMART"
         )
-        spx_contract_put = Option(
-            symbol=creds.instrument,
-            lastTradeDateOrContractMonth=self.date,
+        await self.broker.place_market_order(contract=spx_contract_call, qty=1, side="BUY")
+
+        spx_contract_call = Option(
+            symbol="SPX",
+            lastTradeDateOrContractMonth=credentials.date,
             strike=self.otm_closest_put,
             right='P',
-            exchange=creds.exchange
+            exchange="SMART"
         )
+        await self.broker.place_market_order(contract=spx_contract_call, qty=1, side="BUY")
 
-        # Place orders concurrently
-        self.broker.place_market_order(contract=spx_contract_call, qty=1, side="BUY")
-        self.broker.place_market_order(contract=spx_contract_put, qty=1, side="BUY")
-
-    async def close_open_hedges(self, close_put=True, close_call=True):
+    async def close_open_hedges(self, close_put=False, close_call=False):
         if close_call:
             spx_contract_call = Option(
-                symbol=creds.instrument,
-                lastTradeDateOrContractMonth=self.date,
+                symbol="SPX",
+                lastTradeDateOrContractMonth=credentials.date,
                 strike=self.otm_closest_call,
                 right='C',
-                exchange=creds.exchange
+                exchange="SMART"
             )
-            self.broker.place_market_order(contract=spx_contract_call, qty=1, side="SELL")
+            await self.broker.place_market_order(contract=spx_contract_call, qty=1, side="SELL")
         if close_put:
             spx_contract_put = Option(
-                symbol=creds.instrument,
-                lastTradeDateOrContractMonth=self.date,
-                strike=self.otm_closest_put,
+                symbol="SPX",
+                lastTradeDateOrContractMonth=credentials.date,
+                strike=self.otm_closest_call,
                 right='P',
-                exchange=creds.exchange
+                exchange="SMART"
             )
-            self.broker.place_market_order(contract=spx_contract_put, qty=1, side="SELL")
+            await self.broker.place_market_order(contract=spx_contract_put, qty=1, side="SELL")
 
     async def place_atm_call_order(self, sl):
-        current_price = self.broker.current_price("SPX", "CBOE")
-        closest_current_price = min(self.strikes, key=lambda x: abs(x - current_price))
+        current_price = await self.broker.current_price("SPX", "CBOE")
+        self.closest_current_price = min(self.strikes, key=lambda x: abs(x - current_price))
 
         spx_contract = Option(
-            symbol=creds.instrument,
-            lastTradeDateOrContractMonth=self.date,
-            strike=closest_current_price,
+            symbol="SPX",
+            lastTradeDateOrContractMonth=credentials.date,
+            strike=self.closest_current_price,
             right='C',
-            exchange=creds.exchange
+            exchange="SMART"
         )
 
-        _, fill_price = self.broker.place_market_order(contract=spx_contract, qty=1, side="SELL")
-        stop_loss_price = fill_price * (1 + sl)
+        # Qualify the contract
+        qualified_contracts = self.broker.client.qualifyContracts(spx_contract)
+        if not qualified_contracts:
+            raise ValueError("Failed to qualify contract with IBKR.")
 
-        position_id = f"call_{closest_current_price}_{time.time()}"
-
-        self.active_positions[position_id] = {
-            'contract': spx_contract,
-            'entry_price': fill_price,
-            'stop_loss': stop_loss_price
-        }
-
-    async def place_atm_put_order(self, sl):
-        current_price = self.broker.current_price("SPX", "CBOE")
-        closest_current_price = min(self.strikes, key=lambda x: abs(x - current_price))
-
-        spx_contract = Option(
-            symbol=creds.instrument,
-            lastTradeDateOrContractMonth=self.date,
-            strike=closest_current_price,
-            right='P',
-            exchange=creds.exchange
-        )
-        _, fill_price = self.broker.place_market_order(contract=spx_contract, qty=1, side="SELL")
-        stop_loss_price = fill_price * (1 - sl)
+        k = await self.broker.place_bracket_order(symbol="SPX", quantity=1, price=4.8, stoploss=6, expiry=credentials.date,
+                                                  strike=self.closest_current_price, right="C", trailingpercent=sl)
+        self.atm_call_parendID = k['parent_id']
+        self.atm_call_fill = k['avgFill']
+        print(k)
 
 
 if __name__ == "__main__":
